@@ -84,6 +84,7 @@ def serverReject : Async Unit := do
   checkEq ((res426.headers.get? LeanWs.Handshake.Header.secWebSocketVersion).map (·.value)) (some "13") "advertises version 13"
   checkEq (LeanWs.Handshake.Reject.malformedKey.toResponse.1.status.toCode) 400 "400 for bad key"
   checkEq ((LeanWs.Handshake.Reject.originRejected none).toResponse.1.status.toCode) 403 "403 for origin"
+  checkEq (LeanWs.Handshake.Reject.unauthorized.toResponse.1.status.toCode) 401 "401 for unauthorized"
   checkEq ((LeanWs.Handshake.Reject.unsupportedVersion (some "8")).toResponse.1.status.toCode) 426 "426 for version"
 
 def clientRequest : Async Unit := do

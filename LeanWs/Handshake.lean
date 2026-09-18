@@ -69,6 +69,8 @@ inductive Reject where
   /-- The key is not base64 for exactly 16 bytes. -/
   | malformedKey
   | originRejected (origin : Option String)
+  /-- Missing or invalid credentials at upgrade (application policy). -/
+  | unauthorized
   deriving Repr, BEq
 
 instance : ToString Reject where
@@ -80,6 +82,7 @@ instance : ToString Reject where
     | .missingKey => "missing Sec-WebSocket-Key"
     | .malformedKey => "malformed Sec-WebSocket-Key"
     | .originRejected origin => s!"origin rejected: {origin.getD "(missing)"}"
+    | .unauthorized => "unauthorized"
 
 /-- A completed server-side handshake decision. -/
 structure Accept where
@@ -101,10 +104,11 @@ def Reject.status : Reject → Status
   | .notAnUpgrade | .unsupportedVersion _ => .upgradeRequired
   | .methodNotGet => .methodNotAllowed
   | .originRejected _ => .forbidden
+  | .unauthorized => .unauthorized
   | .versionNotHttp11 | .missingKey | .malformedKey => .badRequest
 
 /-- The response for a rejected request: `426` with `Upgrade` and
-    `Sec-WebSocket-Version` for non-upgrade requests, `400`, `403` or `405`
+    `Sec-WebSocket-Version` for non-upgrade requests, `400`, `401`, `403` or `405`
     otherwise, always with `Connection: close` and a short text body. -/
 def Reject.toResponse (r : Reject) : Response.Head × ByteArray :=
   let body := (toString r).toUTF8
