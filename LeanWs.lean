@@ -1,3 +1,4 @@
+import LeanWs.Version
 import LeanWs.Base64
 import LeanWs.Sha1
 import LeanWs.Frame

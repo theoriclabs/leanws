@@ -32,7 +32,9 @@ structure ServerConfig where
   idleTimeoutMs : Nat := 60000
   limits : Limits := {}
   /-- See `SessionOptions.sendQueue`. -/
-  sendQueue : Nat := 64
+  sendQueue : Nat := 256
+  /-- See `SessionOptions.sendTimeoutMs`. -/
+  sendTimeoutMs : Nat := 1000
   /-- See `SessionOptions.recvQueue`. -/
   recvQueue : Nat := 64
   /-- See `SessionOptions.closeTimeoutMs`. -/
@@ -42,8 +44,8 @@ structure ServerConfig where
 
 /-- `SessionOptions` derived from a server configuration. -/
 def ServerConfig.sessionOptions (c : ServerConfig) : SessionOptions :=
-  { sendQueue := c.sendQueue, recvQueue := c.recvQueue, idleTimeoutMs := c.idleTimeoutMs,
-    closeTimeoutMs := c.closeTimeoutMs }
+  { sendQueue := c.sendQueue, sendTimeoutMs := c.sendTimeoutMs, recvQueue := c.recvQueue,
+    idleTimeoutMs := c.idleTimeoutMs, closeTimeoutMs := c.closeTimeoutMs }
 
 /-- A running listener. Obtain one from `Server.serve`. -/
 structure Server where private mk ::
@@ -142,6 +144,16 @@ private def readHandshake (s : Server) (t : Tcp) : Async (Option (Request.Head �
         | .timeout | .stop => Transport.close t; return none
   return none
 
+/-- Complete an upgrade on a transport whose request head has already been
+    read and accepted: write the `101` response for `accept` and start a
+    server-role session. `leftover` holds bytes received after the request
+    head. This is the entry point for code that runs its own listener or HTTP
+    parser; `serve` uses it too. -/
+def upgrade [Transport α] (t : α) (accept : Handshake.Accept) (limits : Limits := {})
+    (opts : SessionOptions := {}) (leftover : ByteArray := .empty) : Async Session := do
+  Transport.sendAll t #[Handshake.encodeResponse accept.toResponse]
+  Session.start t .server limits opts leftover
+
 /-- Handshake one accepted socket, then run `onSession` for the resulting
     session and close it with `1000` when the handler returns. -/
 private def handleConnection (s : Server) (socket : Socket.Client)
@@ -155,12 +167,11 @@ private def handleConnection (s : Server) (socket : Socket.Client)
       let (res, body) := reject.toResponse
       respond t res body
   | .ok accept =>
-      try
-        Transport.sendAll t #[Handshake.encodeResponse accept.toResponse]
-      catch _ =>
-        Transport.close t
-        return
-      let session ← Session.start t .server s.config.limits s.config.sessionOptions leftover
+      let session ← try
+          upgrade t accept s.config.limits s.config.sessionOptions leftover
+        catch _ =>
+          Transport.close t
+          return
       let id ← register s session
       try
         try onSession session accept catch _ => pure ()

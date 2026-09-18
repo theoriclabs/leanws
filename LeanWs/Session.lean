@@ -100,9 +100,12 @@ private inductive Command where
   | close (info : CloseInfo)
   | abort
 
+/-- An item in the ordered data queue. -/
 private inductive Outbound where
-  | frames (fs : Array Frame)
-  /-- A close frame; the writer stops after sending it. -/
+  /-- One message; holds a send permit until written. -/
+  | message (fs : Array Frame)
+  /-- Our close frame; the writer stops after sending it, so messages queued
+      earlier still go out first and nothing follows it. -/
   | close (f : Frame)
 
 /-- One WebSocket connection after the handshake. Create with `Session.start`;
@@ -112,10 +115,12 @@ structure Session where private mk ::
   limits : Limits
   opts : SessionOptions
   private inbound : CloseableChannel Message
-  /-- Queued messages as frames; `permits` bounds it to `sendQueue` entries. -/
-  private data : CloseableChannel (Array Frame)
+  /-- Messages and the final close frame in send order; `permits` bounds the
+      messages to `sendQueue`. -/
+  private data : CloseableChannel Outbound
   private permits : Semaphore
-  private control : CloseableChannel Outbound
+  /-- Pings and pongs; sent ahead of queued data. -/
+  private control : CloseableChannel (Array Frame)
   private commands : CloseableChannel Command
   private state : IO.Ref State
   private writerDone : IO.Promise Unit
@@ -134,8 +139,8 @@ private def mask (s : Session) : IO (Option UInt32) := do
       return some (((bytes.get! 0).toUInt32 <<< 24) ||| ((bytes.get! 1).toUInt32 <<< 16) |||
         ((bytes.get! 2).toUInt32 <<< 8) ||| (bytes.get! 3).toUInt32)
 
-private def enqueueControl (s : Session) (o : Outbound) : BaseIO Unit :=
-  discard (s.control.trySend o)
+private def enqueueControl (s : Session) (fs : Array Frame) : BaseIO Unit :=
+  discard (s.control.trySend fs)
 
 /-- Queue our close frame once; later calls return `false`. Also closes the
     inbound queue so a reader blocked on a full queue can proceed. -/
@@ -149,7 +154,7 @@ private def sendClose (s : Session) (info : CloseInfo) : IO Bool := do
     let frame : Frame :=
       if info.code == .noStatus then { opcode := .close, mask := key }
       else Frame.close info.code info.reason key
-    enqueueControl s (.close frame)
+    discard (s.data.trySend (.close frame))
     discard s.inbound.close.toBaseIO
   return first
 
@@ -176,51 +181,65 @@ private def fail [Transport α] (s : Session) (t : α) (code : CloseCode) (reaso
   finish s t
 
 private inductive WriteEvent where
-  | control (o : Option Outbound)
-  | data (fs : Option (Array Frame))
+  | control (fs : Option (Array Frame))
+  | data (o : Option Outbound)
 
 /-- Send whatever control frames are already queued. -/
 private partial def flushControl [Transport α] (s : Session) (t : α) : Async Unit := do
   match ← s.control.tryRecv with
   | none => pure ()
-  | some (.frames fs) => Transport.sendAll t (fs.map Frame.encode); flushControl s t
-  | some (.close f) => Transport.sendAll t #[f.encode]
+  | some fs => Transport.sendAll t (fs.map Frame.encode); flushControl s t
 
-/-- Send one queued message plus any others already waiting, up to
-    `writeBatchBytes`, in a single transport write. -/
-private def writeBatch [Transport α] (s : Session) (t : α) (first : Array Frame) : Async Unit := do
-  let mut chunks := first.map Frame.encode
-  let mut bytes := chunks.foldl (· + ·.size) 0
-  let mut messages := 1
-  while bytes < s.opts.writeBatchBytes do
-    match ← s.data.tryRecv with
+/-- Send `first` plus any data already waiting, up to `writeBatchBytes`, in
+    one transport write. Returns `true` once the close frame has been sent. -/
+private def writeBatch [Transport α] (s : Session) (t : α) (first : Outbound) : Async Bool := do
+  let mut chunks : Array ByteArray := #[]
+  let mut bytes := 0
+  let mut messages := 0
+  let mut closed := false
+  let mut next := some first
+  repeat
+    match next with
     | none => break
-    | some fs =>
+    | some (.close f) =>
+        chunks := chunks.push f.encode
+        closed := true
+        break
+    | some (.message fs) =>
         let encoded := fs.map Frame.encode
         bytes := bytes + encoded.foldl (· + ·.size) 0
         chunks := chunks ++ encoded
         messages := messages + 1
+        next ← if bytes < s.opts.writeBatchBytes then s.data.tryRecv else pure none
   try
     Transport.sendAll t chunks
   finally
     for _ in [0:messages] do s.permits.release
+  return closed
 
-/-- The writer: control frames first, then data messages, until a close frame
-    is sent or every queue is closed. A transport error aborts the session. -/
+/-- Send everything still queued after the queues were closed: control
+    frames, then data up to and including the close frame. -/
+private partial def drainAll [Transport α] (s : Session) (t : α) : Async Unit := do
+  flushControl s t
+  match ← s.data.tryRecv with
+  | none => pure ()
+  | some item =>
+      unless ← writeBatch s t item do drainAll s t
+
+/-- The writer: control frames first, then data in order, until the close
+    frame is sent or every queue is closed. A transport error aborts the session. -/
 private partial def writeLoop [Transport α] (s : Session) (t : α) : Async Unit := do
   try
     repeat
       let event ← match ← s.control.tryRecv with
-        | some o => pure (WriteEvent.control (some o))
+        | some fs => pure (WriteEvent.control (some fs))
         | none => Selectable.one #[
-            .case s.control.recvSelector (fun o => pure (WriteEvent.control o)),
-            .case s.data.recvSelector (fun fs => pure (WriteEvent.data fs))]
+            .case s.control.recvSelector (fun fs => pure (WriteEvent.control fs)),
+            .case s.data.recvSelector (fun o => pure (WriteEvent.data o))]
       match event with
-      | .control none => break
-      | .data none => flushControl s t; break
-      | .control (some (.frames fs)) => Transport.sendAll t (fs.map Frame.encode)
-      | .control (some (.close f)) => Transport.sendAll t #[f.encode]; break
-      | .data (some fs) => writeBatch s t fs
+      | .control none | .data none => drainAll s t; break
+      | .control (some fs) => Transport.sendAll t (fs.map Frame.encode)
+      | .data (some item) => if ← writeBatch s t item then break
   catch _ =>
     discard (s.commands.trySend .abort)
   s.writerDone.resolve ()
@@ -248,7 +267,7 @@ private def handleFrame [Transport α] (s : Session) (t : α) (asm : Assembler) 
   match f.opcode with
   | .ping =>
       if st.sent.isNone then
-        enqueueControl s (.frames #[Frame.pong f.payload (← mask s)])
+        enqueueControl s #[Frame.pong f.payload (← mask s)]
       return (asm, true)
   | .pong => return (asm, true)
   | .close =>
@@ -364,7 +383,7 @@ private partial def readLoop [Transport α] (s : Session) (t : α) (initial : By
                   running := false
                 else if n ≥ st.lastActivity + s.opts.idleTimeoutMs / 2 && !st.pingOutstanding then
                   s.state.modify fun st => { st with pingOutstanding := true }
-                  enqueueControl s (.frames #[Frame.ping .empty (← mask s)])
+                  enqueueControl s #[Frame.ping .empty (← mask s)]
   catch _ =>
     finish s t
 
@@ -414,7 +433,7 @@ def send (s : Session) (m : Message) : Async (Except SendError Unit) := do
   unless ← acquirePermit s do
     return .error (if ← s.isOpen then .queueFull else .closed)
   let frames := m.toFrames s.limits.maxFrame (← mask s)
-  if ← s.data.trySend frames then return .ok ()
+  if ← s.data.trySend (.message frames) then return .ok ()
   s.permits.release
   return .error .closed
 
@@ -429,7 +448,7 @@ def recvSelector (s : Session) : Selector (Option Message) :=
 /-- Queue a ping; the peer's pong is consumed by the reader. -/
 def ping (s : Session) (payload : ByteArray := .empty) : Async Unit := do
   if ← s.isOpen then
-    enqueueControl s (.frames #[Frame.ping payload (← mask s)])
+    enqueueControl s #[Frame.ping payload (← mask s)]
 
 /-- Wait until the session has fully closed. -/
 def waitClosed (s : Session) : Async Closed := do

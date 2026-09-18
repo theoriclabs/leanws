@@ -173,14 +173,8 @@ def drain : Async Unit := do
 private def sizeOrDefault (name : String) (default : Nat) : IO Nat := do
   return ((← IO.getEnv name) >>= String.toNat?).getD default
 
-/-- One client: connect, exchange `perSocket` messages, then either close
-    cleanly or stay open for the drain phase. Returns the message count and
-    the time spent connecting. -/
-private def clientRun (uri : URI) (id perSocket : Nat) (keepOpen : Bool) (kept : IO.Ref (Array LeanWs.Session)) :
-    Async (Nat × Nat) := do
-  let t0 ← IO.monoMsNow
-  let s ← connectRetry uri { session := { idleTimeoutMs := 0 } }
-  let connectMs := (← IO.monoMsNow) - t0
+/-- Exchange `perSocket` messages on an open session; returns the echo count. -/
+private def exchange (s : LeanWs.Session) (id perSocket : Nat) : Async Nat := do
   let mut count := 0
   for i in [0:perSocket] do
     let msg : LeanWs.Message := if i % 2 == 0 then .text s!"c{id}-m{i}"
@@ -193,40 +187,62 @@ private def clientRun (uri : URI) (id perSocket : Nat) (keepOpen : Bool) (kept :
         unless back == msg do throw (failure s!"client {id}: echo mismatch")
         count := count + 1
     | none => throw (failure s!"client {id}: closed early: {repr (← s.closed?)}")
-  if keepOpen then
-    kept.modify (·.push s)
-  else
-    s.close .normal
-    let closed ← s.waitClosed
-    unless closed.clean do throw (failure s!"client {id}: unclean close {repr closed}")
-  return (count, connectMs)
+  return count
 
-/-- 1,000 concurrent sockets, 10 messages each, then drain the rest with 1001. -/
+/-- 1,000 concurrent sockets exchanging 10 messages each, then a drain that
+    closes the sockets still open with 1001. Connections are opened in waves
+    of 100 because the kernel listen queue (`somaxconn`, 128 on macOS) drops
+    SYNs beyond it and the retransmit delay would dominate the measurement. -/
 def stress : Async Unit := do
   let sockets ← sizeOrDefault "LEANWS_LOOPBACK_SOCKETS" 1000
   let perSocket ← sizeOrDefault "LEANWS_LOOPBACK_MESSAGES" 10
-  let server ← LeanWs.Server.serve (loopback) { idleTimeoutMs := 0, backlog := 4096 } acceptAll echo
+  let server ← LeanWs.Server.serve (loopback) { idleTimeoutMs := 0, backlog := 1024 } acceptAll echo
   let uri := wsUri server "/stress"
-  let kept ← IO.mkRef (#[] : Array LeanWs.Session)
+  let opts : ClientOptions := { session := { idleTimeoutMs := 0 } }
+  -- phase 1: connect
   let t0 ← IO.monoMsNow
-  let results ← Async.concurrentlyAll ((Array.range sockets).map fun id =>
-    clientRun uri id perSocket (id % 20 == 0) kept)
-  let elapsed := (← IO.monoMsNow) - t0
-  let total := results.foldl (fun acc r => acc + r.1) 0
-  let maxConnect := results.foldl (fun m r => max m r.2) 0
-  checkEq total (sockets * perSocket) "every message echoed"
-  let keptSessions ← kept.get
-  checkEq keptSessions.size ((sockets + 19) / 20) "sessions kept open for drain"
-  let rate := if elapsed == 0 then 0 else total * 1000 / elapsed
-  IO.println s!"    {sockets} sockets × {perSocket} messages = {total} round trips in {elapsed} ms ({rate} msg/s); slowest connect+handshake {maxConnect} ms"
+  let mut sessions : Array LeanWs.Session := #[]
+  let mut remaining := sockets
+  while remaining > 0 do
+    let wave := min remaining 100
+    let batch ← Async.concurrentlyAll ((Array.range wave).map fun _ => connectRetry uri opts)
+    sessions := sessions ++ batch
+    remaining := remaining - wave
+  let connectMs := (← IO.monoMsNow) - t0
+  checkEq (← server.activeSessions) sockets "all sessions registered"
+  -- phase 2: exchange messages on every socket at once
   let t1 ← IO.monoMsNow
+  let counts ← Async.concurrentlyAll (sessions.zipIdx.map fun (s, id) => exchange s id perSocket)
+  let messageMs := (← IO.monoMsNow) - t1
+  let total := counts.foldl (· + ·) 0
+  checkEq total (sockets * perSocket) "every message echoed"
+  let rate := if messageMs == 0 then 0 else total * 1000 / messageMs
+  IO.println s!"    {sockets} sockets connected and handshaken in {connectMs} ms"
+  IO.println s!"    {sockets} sockets × {perSocket} messages = {total} round trips in {messageMs} ms ({rate} msg/s)"
+  -- phase 3: 19 of 20 sockets close cleanly; the rest stay open for the drain
+  let t2 ← IO.monoMsNow
+  let closers := sessions.zipIdx.filterMap fun (s, id) =>
+    if id % 20 == 0 then none else some (do
+      s.close .normal
+      let closed ← s.waitClosed
+      unless closed.clean do throw (failure s!"client {id}: unclean close {repr closed}"))
+  discard (Async.concurrentlyAll closers)
+  let closeMs := (← IO.monoMsNow) - t2
+  let kept := sessions.zipIdx.filterMap fun (s, id) => if id % 20 == 0 then some s else none
+  let mut waited := 0
+  while (← server.activeSessions) > kept.size && waited < 500 do
+    sleep 10
+    waited := waited + 1
+  checkEq (← server.activeSessions) kept.size "closed sessions unregistered"
+  IO.println s!"    {closers.size} sessions closed with 1000 in {closeMs} ms"
+  let t3 ← IO.monoMsNow
   server.drain
-  let drainMs := (← IO.monoMsNow) - t1
-  for s in keptSessions do
+  let drainMs := (← IO.monoMsNow) - t3
+  for s in kept do
     checkEq (← s.recv) none "kept session drained"
     checkEq (← s.waitClosed).code .goingAway "1001 on drain"
   checkEq (← server.activeSessions) 0 "all sessions gone"
-  IO.println s!"    drained {keptSessions.size} open sessions with 1001 in {drainMs} ms"
+  IO.println s!"    drained {kept.size} open sessions with 1001 in {drainMs} ms"
 
 def run (runner : Runner) : IO Unit := do
   suite "Loopback (Server + Client)"
