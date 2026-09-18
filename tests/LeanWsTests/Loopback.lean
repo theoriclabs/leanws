@@ -199,7 +199,7 @@ private def clientRun (uri : URI) (id perSocket : Nat) (keepOpen : Bool) (kept :
     s.close .normal
     let closed ← s.waitClosed
     unless closed.clean do throw (failure s!"client {id}: unclean close {repr closed}")
-  return count
+  return (count, connectMs)
 
 /-- 1,000 concurrent sockets, 10 messages each, then drain the rest with 1001. -/
 def stress : Async Unit := do
@@ -209,15 +209,16 @@ def stress : Async Unit := do
   let uri := wsUri server "/stress"
   let kept ← IO.mkRef (#[] : Array LeanWs.Session)
   let t0 ← IO.monoMsNow
-  let counts ← Async.concurrentlyAll ((Array.range sockets).map fun id =>
+  let results ← Async.concurrentlyAll ((Array.range sockets).map fun id =>
     clientRun uri id perSocket (id % 20 == 0) kept)
   let elapsed := (← IO.monoMsNow) - t0
-  let total := counts.foldl (· + ·) 0
+  let total := results.foldl (fun acc r => acc + r.1) 0
+  let maxConnect := results.foldl (fun m r => max m r.2) 0
   checkEq total (sockets * perSocket) "every message echoed"
   let keptSessions ← kept.get
   checkEq keptSessions.size ((sockets + 19) / 20) "sessions kept open for drain"
   let rate := if elapsed == 0 then 0 else total * 1000 / elapsed
-  IO.println s!"    {sockets} sockets × {perSocket} messages = {total} round trips in {elapsed} ms ({rate} msg/s)"
+  IO.println s!"    {sockets} sockets × {perSocket} messages = {total} round trips in {elapsed} ms ({rate} msg/s); slowest connect+handshake {maxConnect} ms"
   let t1 ← IO.monoMsNow
   server.drain
   let drainMs := (← IO.monoMsNow) - t1
