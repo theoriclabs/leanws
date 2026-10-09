@@ -5,6 +5,24 @@ are published as `vX.Y.Z` Git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-09
+
+### Added
+
+- `Handshake.Reject.unauthorized`, answered with `401 Unauthorized`, so hosts
+  can refuse an upgrade on missing or invalid credentials separately from the
+  `403` origin rejection.
+
+### Changed
+
+- Requires Lean `v4.34.1` (previously `v4.33.0`); `lean-toolchain` is updated
+  accordingly. `Std.Http`'s `URI.query` is now `Option URI.Query`;
+  `Handshake.client` still sends a bare origin-form request target when the
+  query is absent or empty.
+- Autobahn testsuite result recorded in the README: all 301 non-extension
+  cases pass on Lean `v4.34.1` (293 OK, 3 informational, 5 non-strict, no
+  failures).
+
 ## [0.1.0] - 2026-09-18
 
 Initial release: a Lean-native WebSocket library (RFC 6455) over
@@ -49,5 +67,6 @@ Initial release: a Lean-native WebSocket library (RFC 6455) over
 - `wss://`; TLS is left to an ingress.
 - A recorded Autobahn report; see the README for how to run it.
 
-[Unreleased]: https://github.com/theoriclabs/leanws/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/theoriclabs/leanws/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/theoriclabs/leanws/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/theoriclabs/leanws/releases/tag/v0.1.0
