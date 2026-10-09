@@ -10,7 +10,7 @@ and response heads, methods, headers and URIs.
 [[require]]
 name = "leanws"
 git = "https://github.com/theoriclabs/leanws"
-rev = "v0.1.0"
+rev = "v0.2.0"
 ```
 
 ```lean
@@ -295,14 +295,17 @@ On Linux use `--network host` and `ws://127.0.0.1:9001` instead of
 `host.docker.internal`. Cases 12.* and 13.* exercise the permessage-deflate
 extension, which leanws does not implement, and are excluded; the remaining
 cases (1–10, framing, pings, reserved bits, opcodes, fragmentation, UTF-8,
-close handling, limits and performance) are the conformance target. The
-report for this release has not been recorded because the Docker daemon was
-unavailable on the release machine; the `session` test suite covers the
-same protocol rules with hand-built frames.
+close handling, limits and performance) are the conformance target. For
+0.2.0 the fuzzing client ran all 301 non-extension cases against
+`leanws_echo` on Lean v4.34.1 with no failures: 293 OK, 3 informational and
+5 non-strict (5.15 and 6.4.1–6.4.4, where the server rejects the violation
+with `1002` or `1007` once the offending message is complete instead of
+failing fast mid-message, which Autobahn accepts). The `session` test suite
+covers the same protocol rules with hand-built frames.
 
 ## Upstream note
 
-`Std.Http.Server` in Lean 4.33 has no upgrade hook: once a handler responds,
+`Std.Http.Server` in Lean 4.34 has no upgrade hook: once a handler responds,
 the connection stays an HTTP/1.1 connection, so a WebSocket endpoint cannot
 share the HTTP port. A small `onUpgrade` hook in `Std.Http.Server.Connection`
 — handing the socket, the parsed request head and any buffered bytes to the
@@ -313,7 +316,7 @@ requests to it.
 
 ## Runtime and development
 
-Requires Lean `v4.33.0`. No native dependencies beyond the Lean runtime
+Requires Lean `v4.34.1`. No native dependencies beyond the Lean runtime
 (libuv is part of it). Changes are recorded in [CHANGELOG.md](CHANGELOG.md);
 published versions are available in
 [GitHub Releases](https://github.com/theoriclabs/leanws/releases). See
