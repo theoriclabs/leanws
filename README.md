@@ -313,7 +313,7 @@ requests to it.
 
 ## Runtime and development
 
-Requires Lean `v4.33.0`. No native dependencies beyond the Lean runtime
+Requires Lean `v4.34.1`. No native dependencies beyond the Lean runtime
 (libuv is part of it). Changes are recorded in [CHANGELOG.md](CHANGELOG.md);
 published versions are available in
 [GitHub Releases](https://github.com/theoriclabs/leanws/releases). See

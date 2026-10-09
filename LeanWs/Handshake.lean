@@ -169,7 +169,7 @@ def client (uri : URI) (subprotocols : List String := []) (key : String)
         | _ => toString auth.host
     | none => ""
   let path : URI.Path := if uri.path.segments.isEmpty then { segments := #[], absolute := true } else uri.path
-  let target : RequestTarget := .originForm path (if uri.query.isEmpty then none else some uri.query)
+  let target : RequestTarget := .originForm path uri.query
   let headers := extraHeaders
     |>.insert Std.Http.Header.Name.host (headerValue host)
     |>.insert Header.upgrade ⟨"websocket", by decide⟩

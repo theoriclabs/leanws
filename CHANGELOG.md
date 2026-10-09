@@ -5,6 +5,13 @@ are published as `vX.Y.Z` Git tags and GitHub releases.
 
 ## [Unreleased]
 
+### Changed
+
+- Requires Lean `v4.34.1`. `Std.Http.URI.query` is now `Option URI.Query`, and
+  `Handshake.client` passes it to the origin-form request target as is. A URI
+  with a present but empty query (`ws://host/path?`) now keeps its `?` on the
+  wire; previously the empty query was dropped.
+
 ## [0.1.0] - 2026-09-18
 
 Initial release: a Lean-native WebSocket library (RFC 6455) over
