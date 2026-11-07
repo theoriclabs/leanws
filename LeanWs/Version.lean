@@ -1,6 +1,6 @@
 namespace LeanWs
 
 /-- The leanws package version. -/
-def packageVersion : String := "0.2.0"
+def packageVersion : String := "0.3.0"
 
 end LeanWs

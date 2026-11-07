@@ -5,6 +5,16 @@ are published as `vX.Y.Z` Git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-07
+
+### Changed
+
+- Requires Lean `v4.35.0` (previously `v4.34.1`); `lean-toolchain` is updated
+  accordingly. No source changes were needed, and the build has no warnings.
+- Autobahn testsuite result recorded in the README: all 301 non-extension
+  cases pass on Lean `v4.35.0` (292 OK, 3 informational, 6 non-strict, no
+  failures).
+
 ## [0.2.0] - 2026-10-09
 
 ### Added
@@ -67,6 +77,7 @@ Initial release: a Lean-native WebSocket library (RFC 6455) over
 - `wss://`; TLS is left to an ingress.
 - A recorded Autobahn report; see the README for how to run it.
 
-[Unreleased]: https://github.com/theoriclabs/leanws/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/theoriclabs/leanws/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/theoriclabs/leanws/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/theoriclabs/leanws/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/theoriclabs/leanws/releases/tag/v0.1.0
