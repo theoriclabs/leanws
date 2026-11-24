@@ -10,7 +10,7 @@ and response heads, methods, headers and URIs.
 [[require]]
 name = "leanws"
 git = "https://github.com/theoriclabs/leanws"
-rev = "v0.3.0"
+rev = "v0.4.0"
 ```
 
 ```lean
@@ -319,7 +319,7 @@ requests to it.
 
 ## Runtime and development
 
-Requires Lean `v4.35.0`. No native dependencies beyond the Lean runtime
+Requires Lean `v4.36.0`. No native dependencies beyond the Lean runtime
 (libuv is part of it). Changes are recorded in [CHANGELOG.md](CHANGELOG.md);
 published versions are available in
 [GitHub Releases](https://github.com/theoriclabs/leanws/releases). See

@@ -5,6 +5,12 @@ are published as `vX.Y.Z` Git tags and GitHub releases.
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-24
+
+### Changed
+
+- Requires Lean `v4.36.0`.
+
 ## [0.3.0] - 2026-11-07
 
 ### Changed
@@ -77,7 +83,8 @@ Initial release: a Lean-native WebSocket library (RFC 6455) over
 - `wss://`; TLS is left to an ingress.
 - A recorded Autobahn report; see the README for how to run it.
 
-[Unreleased]: https://github.com/theoriclabs/leanws/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/theoriclabs/leanws/compare/v0.2.0...v0.3.0
+[Unreleased]: https://github.com/theoriclabs/leanws/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/theoriclabs/leanws/compare/ca462d91b31196f43addd09a3f482a83ece2c39f...v0.4.0
+[0.3.0]: https://github.com/theoriclabs/leanws/compare/v0.2.0...ca462d91b31196f43addd09a3f482a83ece2c39f
 [0.2.0]: https://github.com/theoriclabs/leanws/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/theoriclabs/leanws/releases/tag/v0.1.0
